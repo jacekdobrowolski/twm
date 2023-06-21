@@ -17,11 +17,10 @@ def loadFrames(path):
         success, img = cap.read()
     return frames
 
-def createRawDriftPoints(imageA, imageB, FeatureDetector, Matcher):
+def createRawDriftPoints(imageA, imageB, FeatureDetector, Matcher, max_x_diff):
     kp1, des1 = FeatureDetector.detectAndCompute(imageA,None)
     kp2, des2 = FeatureDetector.detectAndCompute(imageB,None)
     matches = Matcher.match(des1, des2)
-    print(len(matches))
     points = []
     max_y_diff = 5 #max y diff between matching points
     for match in matches:
@@ -29,117 +28,80 @@ def createRawDriftPoints(imageA, imageB, FeatureDetector, Matcher):
         p2 = kp2[match.trainIdx].pt
         if abs(p1[1]-p2[1]) < max_y_diff:
             x_diff = (p1[0] - p2[0])
-            if x_diff > 0:
+            if x_diff > 0 and x_diff < max_x_diff:
                 p1_i = (int(p1[0]), int(p1[1]))
                 points.append([p1_i[0], p1_i[1], x_diff])
-    print(len(points))
     return np.array(points)
             
-def createDepthMap(points, shape, square_size):
-    map = np.ones(shape) * -1
-    for p in points:
-        x = int(p[0])
-        y = int(p[1])
-        map[x, y] = p[2]
-    x_idx = range(square_size, shape[0] - 1, square_size)
-    y_idx = range(square_size, shape[1] - 1, square_size)
 
-    x1 = 0
-    y1 = 0
-    #for y1 in y_idx:
-
-    #todo sliding window
-
-
-
-def filterWithinRectangle(array):
-    return np.mean(array)
-
-
-def plotPoints(points_list):
+def plotPoints(points_list, shape):
     x = points_list[:,0]
-    y = points_list[:,1]
+    y = shape[1] - points_list[:,1]
     z = points_list[:,2]
-    print(points_list)
-    print(x)
-    x_lim = max(x)
-    y_lim = max(y)
+    x_lim = shape[0]
+    y_lim = shape[1]
+    lim = max([x_lim, y_lim])
+    print(lim)
     ax = plt.axes(projection='3d')
-    ax.scatter(x, y, z, cmap='viridis', linewidth=0.5);
-    ax.set_xlim3d(0, x_lim)
-    ax.set_ylim3d(0, y_lim)
+    ax.scatter(x, y, z, c = z, cmap='viridis', linewidth=0.5, s = 1);
+    ax.set_xlim3d(0, lim)
+    ax.set_ylim3d(0, lim)
+    ax.set_zlim3d(6, 1)
+    # Major ticks every 20, minor ticks every 5
+    major_ticks = np.arange(1, 6.1, 1)
+    minor_ticks = np.arange(1, 6.1, 0.2)
+    ax.set_zticks(major_ticks)
+    ax.set_zticks(minor_ticks, minor=True)
+
+    # And a corresponding grid
+    ax.grid(which='both')
     plt.show()
+
 
 
 #Tu test powyższych metod
 
-#print("testing")
-#surf = cv.xfeatures2d.SURF_create(5)
-#bf = cv.BFMatcher()
-#frames = loadFrames("data/small_grain.avi")
-#points = createRawDriftPoints(frames[0], frames[-1], surf, bf)
-#plotPoints(points)
-
-
-
-
-
-
-#
-#
-# Poniżej "działający" kod, jest nieuporzadkowany więc wymaga upakowania w metody
-#
-#
-#
-#
-#
-#
-
-surf = cv.xfeatures2d.SURF_create(5)
+surf = cv.xfeatures2d.SURF_create(10)
 sift = cv.xfeatures2d.SIFT_create()
+
 bf = cv.BFMatcher()
 
-cap = cv.VideoCapture("data/small_grain.avi")
-success, img1 = cap.read()
-success, img2 = cap.read()
-print(img2.shape)
+FLANN_INDEX_KDTREE = 1
+index_params = dict(algorithm = FLANN_INDEX_KDTREE, trees = 5)
+search_params = dict(checks=50)   # or pass empty dictionary
+flann = cv.FlannBasedMatcher(index_params,search_params)
 
-result = img1.copy()
-fno = 1
-sample_rate = 16
+focal_lenght = 35
+frames = loadFrames("data/focal_35_linear.avi")
+first_f = 1
+last_f = 30
+step = 7
+max_drift_factor = 15
+result = []
+print(len(frames))
 
-kp1, des1 = surf.detectAndCompute(img1,None)
 
-x = []
-y = []
-z = []
+for i in range(step, last_f, step):
+    max_dx = i * max_drift_factor
+    p = createRawDriftPoints(frames[first_f], frames[i], surf, flann, max_dx)
+    print(p.shape)
+    print(p[0])
+    p[:,2] /= (i-first_f)
+    print(p[0])
+    p[:,2] = focal_lenght / p[:,2]
+    result.extend(p)
+result = np.array(result)
+plotPoints(result, (1920, 1080))
 
-while success :
-    if fno % sample_rate == 0:
-        kp2, des2 = surf.detectAndCompute(img2,None)
-        matches = bf.match(des1,des2)
-        #result = img1.copy()
-        for match in matches:
-            p1 = kp1[match.queryIdx].pt
-            p2 = kp2[match.trainIdx].pt
-            if abs(p1[1]-p2[1]) < 5:
-                x_diff = (p1[0] - p2[0]) / fno
-                p1 = (int(p1[0]), int(p1[1]))
-                p2 = (int(p2[0]), int(p2[1]))
-                #cv.line(result, p1, p2, (0,0,0), 1)
-                if x_diff < 15 and x_diff > 3:
-                    x.append(p1[0])
-                    y.append(p1[1])
-                    z.append(x_diff)
-        #plt.imshow(result),plt.show()
-    success, img2 = cap.read()
-    fno += 1
-print(fno)
-print(len(z))
-ax = plt.axes(projection='3d')
-ax.scatter(x, y, z, c=z, cmap='viridis', linewidth=0.5);
-ax.set_xlim3d(0, 2000)
-ax.set_ylim3d(0, 2000)
+fig = plt.figure()
+ax = fig.gca()
+plt.scatter(result[:,0], result[:, 2], s=1)
+ax.set_ylim(6, 1)
+# Major ticks every 20, minor ticks every 5
+major_ticks = np.arange(1, 6.1, 1)
+minor_ticks = np.arange(1, 6.1, 0.2)
+ax.set_yticks(major_ticks)
+ax.set_yticks(minor_ticks, minor=True)
+ax.grid()
+
 plt.show()
- 
-
